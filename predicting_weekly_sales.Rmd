@@ -1,0 +1,303 @@
+---
+title: "Predicting Weekly Sales of Retail Company"
+output: pdf_document
+---
+
+**Key Questions to address:**  
+1.	What are the most important factors that impact weekly sales?  
+2.	How useful are these factors in predicting weekly sales?  
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, message=FALSE}
+library(tidyverse)
+library(corrplot)
+library(fastDummies)
+```
+
+```{r, warning=FALSE}
+# read in data
+setwd("G:/My Drive/Semester 1/Statistics/R Programs/Data Files")
+features <- read.csv('Features data set.csv')
+sales <- read.csv('sales data-set.csv')
+stores <- read.csv('stores data-set.csv')
+
+```
+
+
+# About the Data
+The data was collected from the folloing kaggle site.  
+https://www.kaggle.com/manjeetsingh/retaildataset  
+  
+We have three data sets that consist of weekly sales for 45 different stores across 143 weeks. For a detailed description of the data set, please refer to the Introduction section of the statistical report provided in this repository.
+  
+Below is a quick glance at each data set.
+  
+```{r}
+head(features)
+```
+```{r}
+head(sales)
+```
+```{r}
+head(stores)
+```
+
+# Data Preparation
+
+We merged these three data sets on the store ID and date, grouping our sales by store type and date. We chose not to analyze the markdown attributes since a majority of this data was missing. Our final data set consisted of weekly sales, temperature, fuel price, CPI, unemployment, holiday, store type, and store size.  
+Our final data set allowed us to look into three areas that impact weekly sales: store level attributes, macro-economic variables, and external variables.  
+  
+```{r}
+# group sales
+sales_grouped <- sales %>% group_by(Store, Date) %>%
+  summarise(sum_weekly_sales = sum(Weekly_Sales))
+
+# join grouped sales
+merge <- merge(sales_grouped, features, by=c('Store', 'Date'))
+
+# join to get store type
+all_data <- merge(merge, stores, by='Store')
+
+# select only the predictors we want
+all_data <- all_data %>% 
+  select(c('sum_weekly_sales', 'Temperature', 'Fuel_Price', 'CPI', 'Unemployment', 'IsHoliday', 'Type', 'Size'))
+
+# convert categorical variables to factors
+all_data$IsHoliday <- factor(all_data$IsHoliday)
+all_data$Type <- factor(all_data$Type)
+
+```
+
+# Exploring the Data
+
+We first looked at store type to better understand this attribute and found that store type could be correlated with store size, with Type A stores having the highest size.
+```{r}
+# understanding store types
+store_grouped <- stores %>% group_by(Type) %>%
+  summarise(abg = mean(Size),
+            max = max(Size),
+            min = min(Size),
+            median = median(Size))
+store_grouped
+# Type A stores have highest size
+
+```
+
+To be sure that store type and store size are correlated, we performed an anova test. The results shown below do suggest that there is a relationship between store size and store type. This would mean that if our model included store type and store size, we would not be able to interpret the beta values
+```{r}
+# COLINEARITY
+# size and type are highly correlated
+aov_type_size <- aov(Size ~ Type, all_data)
+summary(aov_type_size)
+```
+
+We also looked at the colinearity between our numeric predictors and found that none were highly colinear. This means that colinearity will not affect our linear regression model, meaning we will still be able to interpret the coefficients of each attribute in our model because these attributes are not colinear.
+```{r}
+# COLINEARITY
+# colinearity of numeric predictors
+x <- cor(all_data[,c(2:5,8)])
+corrplot(x)
+
+```
+
+In addition to looking at colinearity, we found that weekly sales are highly skewed. While having a highly skewed dependent variable does not violate an assumption, it may make OLS regression inappropriate. OLS regression models the mean weekly sales and the mean is not a good measure of central tendency in a skewed distribution
+```{r}
+hist(all_data$sum_weekly_sales, main='Distribution of Weekly Sales', xlab='Weekly Sales')
+```
+
+
+# Modeling
+
+We tested out eight models before deciding on our final model that will predict weekly sales. Below is the code for each model.
+  
+  
+Determining which store type to use as a base for future models
+```{r}
+# type A as base level
+model1 <- lm(sum_weekly_sales ~ Temperature+Fuel_Price+CPI+Unemployment+Size+IsHoliday+Type,
+             all_data)
+summary(model1)
+```
+  
+
+```{r}
+# type B as base level
+all_data_relevel <- within(all_data, Type <- relevel(Type, ref = 'B'))
+model2 <- lm(sum_weekly_sales ~ Temperature+Fuel_Price+CPI+Unemployment+Size+IsHoliday+Type, 
+             all_data_relevel)
+summary(model2)
+```
+  
+
+```{r}
+# type C as base level
+all_data_relevelC <- within(all_data, Type <- relevel(Type, ref = 'C'))
+model3 <- lm(sum_weekly_sales ~ Temperature+Fuel_Price+CPI+Unemployment+Size+IsHoliday+Type, 
+             all_data_relevelC)
+summary(model3)
+```
+We will use Type A as the base level in all of our models because it has the lowest coefficient.  
+  
+  
+**Model 1: Weekly Sales across all predictors**
+```{r}
+model1 <- lm(sum_weekly_sales ~ Temperature+Fuel_Price+CPI+Unemployment+Size+IsHoliday+Type,
+             all_data)
+summary(model1)
+```
+
+  
+**Model 2: Weekly Sales with Size^2 and all Factors**
+```{r}
+model2 <- lm(sum_weekly_sales ~ Size + I(Size^2) + Temperature+Fuel_Price+CPI+Unemployment+IsHoliday+Type, 
+             all_data)
+summary(model2)
+```
+  
+**Model 3: Removing Fuel Price from Model 2**
+```{r}
+model3 <- lm(sum_weekly_sales ~ Size + I(Size^2) + Temperature+CPI+Unemployment+IsHoliday+Type, 
+             all_data)
+summary(model3)
+```
+  
+**Model 4: Removing Temperature from Model 3**
+```{r}
+model4 <- lm(sum_weekly_sales ~ Size + I(Size^2) +CPI+Unemployment+IsHoliday+Type, 
+             all_data)
+summary(model4)
+```
+  
+**Model 5: Removing isHoliday from Model 4:**
+```{r}
+model5 <- lm(sum_weekly_sales ~ Size + I(Size^2) +CPI+Unemployment+Type, 
+              all_data)
+summary(model5)
+```
+
+**Model 6: Removing Type from Model 5**
+```{r}
+model6 <- lm(sum_weekly_sales ~ Size + I(Size^2)+Unemployment+CPI, 
+              all_data)
+summary(model6)
+```
+  
+**Model 7: Remove Unemployment from Model 6**
+```{r}
+model7 <- lm(sum_weekly_sales ~ Size + I(Size^2) +CPI, 
+              all_data)
+summary(model7)
+```
+  
+**Model 8: Removing CPI from Model 6:**
+```{r}
+model8 <- lm(sum_weekly_sales ~ Size + I(Size^2)+Unemployment, 
+              all_data)
+summary(model8)
+```
+  
+After comparing the p-values for each coefficient, the R^2 values, the standard errors, and the number of attributes in each model, we believe that Model 6 is the best model in predicting sales. We have chosen model 6 because 1) it is simple, 2) it explains a majority of the variation in sales compared to other models, 3) it has a low amount of unexplained variance in sales compared to other models, and 4) it is interpretable in the business context.
+  
+Now, we will check the assumptions for this model.  
+  
+The three assumptions needed for a linear regression model are 1) Random sampling, 2) Stability over time, and 3) Error terms are normally distributed with a mean at 0 and a constant standard deviation across all possible values of the predictors.
+  
+The first two assumptions are obviously true, so we will check the third assumption by doing the following three steps:  
+•	Check the mean and constant variance across fitted values  
+•	Check of Mean and constant variance across all attributes  
+•	Check the normality of the residuals with histogram distribution and Normal QQ plot. The shapiro-wilk test was not conducted because the size of data set is too large.  
+
+
+The below graph shows us that the standardized residuals over fitted values seems to have a mean at zero, but the standard deviation of the residuals seems to be inconsistent.
+```{r}
+# ASSUMPTION CHECKING
+attach(all_data)
+# Check of Mean 0 and constant variance across all X
+# Standardized residual plot - on fitted values
+model6.stres <- rstandard(model6)
+plot(model6$fitted.values, model6.stres, pch = 16, 
+     main = "Standardized Residual Plot", 
+     xlab = "Fitted Sales (100s)", 
+     ylab = "Standardized Residuals")
+abline(0,0, lty=2, col="red")
+```
+
+
+The scatter plot below shows us that the standardized residuals over Size seems to have a mean at zero, but the standard deviation of the residuals seems to be inconsistent.
+```{r}
+# Individual scatter plots against St Resids
+# standardized residual plot - on Permits
+plot(Size, model6.stres, pch = 16, 
+     main = "Standardized Residual Plot", 
+     xlab = "Size", 
+     ylab = "Standardized Residuals")
+abline(0,0, lty=2, col="blue")
+```
+
+Below we see that standardized residuals over Size^2 seems to have a mean at zero, but its standard deviation seems to be inconsistent.
+```{r}
+# standardized residual plot - on Size^2
+plot(I(Size^2), model6.stres, pch = 16, 
+     main = "Standardized Residual Plot", 
+     xlab = "Size^2", 
+     ylab = "Standardized Residuals")
+abline(0,0, lty=2, col="blue")
+```
+
+
+Standardized residuals over Unemployment seems to have a mean at zero and a constant standard deviation across all unemployment values.
+```{r}
+# standardized residual plot - on Unemployment
+plot(Unemployment, model6.stres, pch = 16, 
+     main = "Standardized Residual Plot", 
+     xlab = "Unemployment", 
+     ylab = "Standardized Residuals")
+abline(0,0, lty=2, col="blue")
+```
+
+
+Standardized residuals over CPI seems to have a mean at zero, and a constant standard deviation across all Unemployment values.
+```{r}
+# standardized residual plot - on CPI
+plot(CPI, model6.stres, pch = 16, 
+     main = "Standardized Residual Plot", 
+     xlab = "CPI", 
+     ylab = "Standardized Residuals")
+abline(0,0, lty=2, col="blue")
+```
+
+The below graph shows that the residuals have a smaller variance than a typical normal distribution.
+```{r}
+# Normality checking
+# Histogram with normal curve
+h <- hist(model6.stres)
+x <- model6.stres
+xfit <- seq(min(x), max(x), length = 50)
+yfit <- dnorm(xfit, mean = mean(x), sd = sd(x))
+yfit <- yfit*diff(h$mids[1:2])*length(x)
+lines(xfit, yfit, col="blue")
+```
+
+The graph above shows that the residuals have a different distribution from a typical normal distribution.
+```{r}
+# Normal probability plot
+qqnorm(model6.stres, 
+       main = "Normal Probability Plot", 
+       xlab = "Normal Scores", 
+       ylab = "Standardized Residuals")
+qqline(model6.stres, col = "red")
+```
+
+Thus, our third assumption does not hold, and we will conclude that error terms are not normally distributed with a constant standard deviation across all possible values of the predictors. This is one limitation of our model and additional analyses should be done in the future to follow up with this issue.
+  
+# Final Model Interpretations
+
+Our final model found that the size of a store, unemployment rate, and the CPI value are the most important factors that impact the weekly sales. The model explains 68% of the weekly sales. Our degree of confidence of the relationship between Size, CPI and Unemployment with sales in the model is high.
+  
+Based on our model, we know that there is a positive curvilinear relationship between size and weekly sales. There is a negative relationship between CPI and sales: the weekly sales decreases by $19,930 for one unit increase in unemployment index when size and CPI stay unchanged. Finally, there is a negative relationship between unemployment and sales: the weekly sales decreases by $1,409 for one unit increase in CPI when size and unemployment stay unchanged. 
+  
+This model can be used to benchmark a store’s weekly sales. For example, the company can examine a particular store’s size, the unemployment rate in that store’s region, and the CPI value to understand how a store should be performing in terms of weekly sales. Additionally, the model can be utilized to scope out new regions to open stores in. By looking into a particular region’s unemployment rate and CPI, a manager can understand what a store’s weekly sales might look like, depending on the size of the store, if XYZ were to open a store in that region.
